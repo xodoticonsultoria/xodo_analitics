@@ -287,3 +287,99 @@ if abs(producao_nao_explicada) > 10:
 
 for frase in resumo:
     st.write("• " + frase)
+
+# ============================================================
+# 📥 IMPORTAÇÃO HISTÓRICA OFICIAL (MESES ANTERIORES)
+# ============================================================
+
+from sqlalchemy import text
+
+st.subheader("📥 Importação Histórica de Operações")
+
+arquivo = st.file_uploader("Upload Excel Histórico", type=["xlsx"])
+
+if arquivo is not None:
+
+    df_import = pd.read_excel(arquivo)
+
+    obrigatorias = ["data", "produto", "produzido", "vendido", "enviado_filial", "sobra_real"]
+
+    if not all(col in df_import.columns for col in obrigatorias):
+        st.error("Planilha fora do padrão. Verifique as colunas obrigatórias.")
+    else:
+
+        inseridos = 0
+        atualizados = 0
+        erros = 0
+
+        for _, row in df_import.iterrows():
+
+            try:
+                produto_id = pd.read_sql(
+                    f"SELECT id FROM produtos WHERE nome = '{row['produto']}'",
+                    engine
+                )["id"].values[0]
+
+                check_query = text("""
+                    SELECT id FROM operacao_diaria
+                    WHERE data = :data AND produto_id = :produto_id
+                """)
+
+                with engine.connect() as conn:
+
+                    existente = conn.execute(check_query, {
+                        "data": row["data"],
+                        "produto_id": int(produto_id)
+                    }).fetchone()
+
+                    if existente:
+
+                        update_query = text("""
+                            UPDATE operacao_diaria
+                            SET produzido = :produzido,
+                                vendido = :vendido,
+                                enviado_filial = :enviado,
+                                sobra_real = :sobra
+                            WHERE data = :data AND produto_id = :produto_id
+                        """)
+
+                        conn.execute(update_query, {
+                            "data": row["data"],
+                            "produto_id": int(produto_id),
+                            "produzido": row["produzido"],
+                            "vendido": row["vendido"],
+                            "enviado": row["enviado_filial"],
+                            "sobra": row["sobra_real"]
+                        })
+
+                        atualizados += 1
+
+                    else:
+
+                        insert_query = text("""
+                            INSERT INTO operacao_diaria
+                            (data, produto_id, produzido, vendido, enviado_filial, sobra_real)
+                            VALUES
+                            (:data, :produto_id, :produzido, :vendido, :enviado, :sobra)
+                        """)
+
+                        conn.execute(insert_query, {
+                            "data": row["data"],
+                            "produto_id": int(produto_id),
+                            "produzido": row["produzido"],
+                            "vendido": row["vendido"],
+                            "enviado": row["enviado_filial"],
+                            "sobra": row["sobra_real"]
+                        })
+
+                        inseridos += 1
+
+                    conn.commit()
+
+            except Exception as e:
+                erros += 1
+
+        st.success("Importação concluída!")
+        st.write(f"✔ Inseridos: {inseridos}")
+        st.write(f"🔁 Atualizados: {atualizados}")
+        st.write(f"❌ Erros: {erros}")
